@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocuMind AI — Ask your documents</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#64748b; --line:#e2e8f0; --accent:#3157d5; --bg:#f6f8fc; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:28px 22px; color:white; background:linear-gradient(120deg,#172554,#3157d5); }
+    header .wrap, main { max-width:980px; margin:auto; }
+    .eyebrow { text-transform:uppercase; letter-spacing:.14em; font-size:11px; opacity:.8; font-weight:700; }
+    h1 { margin:8px 0; font-size:clamp(28px,5vw,42px); }
+    header p { margin:0; color:#dbeafe; max-width:650px; line-height:1.6; }
+    main { padding:24px 16px 50px; display:grid; gap:18px; }
+    .card { background:white; border:1px solid var(--line); border-radius:18px; padding:22px; box-shadow:0 8px 24px #0f172a08; }
+    h2 { font-size:18px; margin:0 0 8px; }
+    .muted { color:var(--muted); font-size:14px; line-height:1.55; }
+    .upload { border:1.5px dashed #a5b4fc; background:#f8faff; padding:20px; border-radius:12px; margin-top:14px; }
+    input[type=file] { max-width:100%; }
+    textarea { width:100%; resize:vertical; min-height:100px; border:1px solid #cbd5e1; border-radius:12px; padding:13px; font:inherit; margin:10px 0; }
+    button { border:0; border-radius:10px; background:var(--accent); color:white; padding:11px 16px; font-weight:700; cursor:pointer; }
+    button.secondary { background:#eef2ff; color:#273a8a; }
+    button:disabled { opacity:.5; cursor:wait; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .status { font-size:13px; color:var(--muted); margin-top:12px; white-space:pre-wrap; }
+    .answer { white-space:pre-wrap; line-height:1.7; margin-top:12px; }
+    .source { border-top:1px solid var(--line); padding:13px 0; }
+    .source:first-child { border-top:0; }
+    .pill { display:inline-block; background:#eef2ff; color:#3344a3; padding:3px 8px; border-radius:999px; font-size:12px; }
+    .warning { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; border-radius:10px; padding:12px; font-size:13px; line-height:1.5; }
+    footer { text-align:center; color:var(--muted); font-size:12px; padding:0 16px 24px; }
+  </style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="eyebrow">Retrieval-Augmented Generation</div>
+  <h1>DocuMind AI</h1>
+  <p>Upload PDF documents, ask questions in plain English, and inspect the passages used to answer.</p>
+</div></header>
+<main>
+  <section class="card">
+    <h2>1. Add your documents</h2>
+    <p class="muted">Upload text-based PDFs. Documents are indexed in memory for this running session. Scanned PDFs need OCR and are not supported in this starter version.</p>
+    <div class="upload">
+      <input id="files" type="file" accept="application/pdf,.pdf" multiple>
+      <div class="row" style="margin-top:14px"><button id="uploadBtn" onclick="uploadFiles()">Upload and index PDFs</button><span class="pill" id="count">0 chunks indexed</span></div>
+    </div>
+    <div class="status" id="uploadStatus"></div>
+  </section>
+  <section class="card">
+    <h2>2. Ask a question</h2>
+    <p class="muted">Try a question whose answer should be found in the uploaded files. The app returns relevant source passages for inspection.</p>
+    <textarea id="question" placeholder="What are the key recommendations in this document?"></textarea>
+    <div class="row"><button id="askBtn" onclick="askQuestion()">Ask DocuMind</button><button class="secondary" onclick="clearDocs()">Clear documents</button></div>
+    <div class="status" id="askStatus"></div>
+    <div id="answerBox"></div>
+  </section>
+  <div class="warning">Responsible-use note: do not upload confidential, personal, financial or otherwise sensitive documents to a demo. LLM answers can be wrong; verify important claims against the cited source passages.</div>
+</main>
+<footer>DocuMind AI · Python · FastAPI · Sentence Transformers · Gemini API</footer>
+<script>
+async function uploadFiles() {
+  const input = document.getElementById('files');
+  if (!input.files.length) { document.getElementById('uploadStatus').textContent = 'Choose at least one PDF first.'; return; }
+  const btn = document.getElementById('uploadBtn'); btn.disabled = true;
+  document.getElementById('uploadStatus').textContent = 'Uploading and creating embeddings… first run may take a little while.';
+  const form = new FormData(); for (const file of input.files) form.append('files', file);
+  try {
+    const res = await fetch('/api/documents', {method:'POST', body:form});
+    const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Upload failed');
+    document.getElementById('uploadStatus').textContent = data.documents.map(d => `${d.filename}: ${d.chunks_added} chunks`).join('\\n');
+    document.getElementById('count').textContent = `${data.total_chunks} chunks indexed`;
+  } catch (e) { document.getElementById('uploadStatus').textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+async function askQuestion() {
+  const question = document.getElementById('question').value.trim();
+  if (question.length < 3) { document.getElementById('askStatus').textContent = 'Enter a longer question.'; return; }
+  const btn = document.getElementById('askBtn'); btn.disabled = true;
+  document.getElementById('askStatus').textContent = 'Retrieving passages and generating an answer…';
+  document.getElementById('answerBox').innerHTML = '';
+  try {
+    const res = await fetch('/api/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question, top_k:4})});
+    const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Question failed');
+    document.getElementById('askStatus').textContent = data.mode === 'rag' ? 'Answer generated with retrieved document context.' : 'Retrieval-only mode: configure GEMINI_API_KEY for generated answers.';
+    const answer = document.createElement('div'); answer.className = 'answer'; answer.textContent = data.answer;
+    const heading = document.createElement('h3'); heading.textContent = 'Retrieved sources'; heading.style.fontSize = '15px';
+    const sources = document.createElement('div');
+    for (const s of data.sources) {
+      const item = document.createElement('div'); item.className = 'source';
+      const title = document.createElement('strong'); title.textContent = `${s.filename} · chunk ${s.chunk}`;
+      const score = document.createElement('span'); score.className = 'pill'; score.textContent = ` similarity ${s.similarity}`;
+      const excerpt = document.createElement('p'); excerpt.className = 'muted'; excerpt.textContent = s.excerpt;
+      item.append(title, document.createTextNode(' '), score, excerpt); sources.appendChild(item);
+    }
+    document.getElementById('answerBox').append(answer, heading, sources);
+  } catch(e) { document.getElementById('askStatus').textContent = e.message; }
+  finally { btn.disabled = false; }
+}
+async function clearDocs() {
+  if (!confirm('Clear all indexed documents for this session?')) return;
+  const res = await fetch('/api/documents', {method:'DELETE'}); const data = await res.json();
+  document.getElementById('count').textContent = '0 chunks indexed';
+  document.getElementById('uploadStatus').textContent = data.message;
+  document.getElementById('answerBox').innerHTML = '';
+  document.getElementById('askStatus').textContent = '';
+}
+</script>
+</body>
+</html>
